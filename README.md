@@ -1,4 +1,4 @@
-# 💱 Forex Currency Conversion API
+# 💱 Currency Conversion API
 [![Java](https://img.shields.io/badge/Java-17-blue?logo=java)](https://www.oracle.com/java/)  [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4.5-green?logo=spring-boot)](https://spring.io/projects/spring-boot)  [![Maven](https://img.shields.io/badge/Maven-4.0.0-red?logo=apache-maven)](https://maven.apache.org/)
 [![H2 Database](https://img.shields.io/badge/H2%20Database-Embedded-blue)](https://www.h2database.com/)  [![Swagger UI](https://img.shields.io/badge/Swagger-API%20Documentation-brightgreen?logo=swagger)](https://swagger.io/)  [![JUnit](https://img.shields.io/badge/JUnit-purple?logo=junit5)](https://junit.org/junit5/)
 
