@@ -3,6 +3,7 @@ package com.zad.exchangeapi.service;
 import com.zad.exchangeapi.dto.request.DepositRequest;
 import com.zad.exchangeapi.dto.request.ExchangeRequest;
 import com.zad.exchangeapi.dto.request.WithdrawRequest;
+import com.zad.exchangeapi.dto.response.BalanceResponse;
 import com.zad.exchangeapi.dto.response.GenericResponse;
 import com.zad.exchangeapi.entity.Account;
 import com.zad.exchangeapi.entity.Currency;
@@ -16,14 +17,12 @@ import org.mockito.MockitoAnnotations;
 
 import java.math.BigDecimal;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class TransactionServiceImplTest {
-
-    @InjectMocks
-    private TransactionServiceImpl transactionService;
 
     @Mock
     private UserService userService;
@@ -34,7 +33,8 @@ class TransactionServiceImplTest {
     @Mock
     private ExchangeRateService exchangeRateService;
 
-    private final User mockUser = new User(1L, "testUser", null);
+    @InjectMocks
+    private TransactionServiceImpl transactionService;
 
     @BeforeEach
     void setUp() {
@@ -42,32 +42,85 @@ class TransactionServiceImplTest {
     }
 
     @Test
-    void deposit_validRequest_shouldUpdateBalance() {
-        Account account = new Account(10L, Currency.USD, mockUser, new BigDecimal("100"));
-        DepositRequest request = new DepositRequest(1L, Currency.USD, new BigDecimal("50"));
+    void deposit_ShouldUpdateBalanceSuccessfully() {
+        DepositRequest request = new DepositRequest(1L, Currency.USD, BigDecimal.valueOf(100));
+        Account account = new Account(1L, Currency.USD, new User(), BigDecimal.valueOf(200));
 
         when(accountService.getAccount(1L, Currency.USD)).thenReturn(account);
 
         GenericResponse response = transactionService.deposit(request);
 
-        assertTrue(response.success());
-        verify(accountService).updateBalance(eq(account), eq(new BigDecimal("150")));
+        assertThat(response.success()).isTrue();
+        verify(accountService).updateBalance(account, BigDecimal.valueOf(300));
     }
 
     @Test
-    void exchange_valid_shouldUpdateBothAccounts() {
-        Account from = new Account(1L, Currency.USD, mockUser, new BigDecimal("100"));
-        Account to = new Account(2L, Currency.TRY, mockUser, new BigDecimal("500"));
-        ExchangeRequest request = new ExchangeRequest(1L, 2L, Currency.USD, Currency.TRY, new BigDecimal("50"));
+    void deposit_ShouldThrowForInvalidAmount() {
+        DepositRequest request = new DepositRequest(1L, Currency.USD, BigDecimal.ZERO);
 
-        when(accountService.getAccount(1L, Currency.USD)).thenReturn(from);
-        when(accountService.getAccount(2L, Currency.TRY)).thenReturn(to);
-        when(exchangeRateService.getExchangeRate(Currency.USD, Currency.TRY)).thenReturn(new BigDecimal("30"));
+        assertThatThrownBy(() -> transactionService.deposit(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Amount must be greater than zero");
+    }
+
+    @Test
+    void withdraw_ShouldUpdateBalanceSuccessfully() {
+        WithdrawRequest request = new WithdrawRequest(1L, Currency.USD, BigDecimal.valueOf(50));
+        Account account = new Account(1L, Currency.USD, new User(), BigDecimal.valueOf(100));
+
+        when(accountService.getAccount(1L, Currency.USD)).thenReturn(account);
+
+        GenericResponse response = transactionService.withdraw(request);
+
+        assertThat(response.success()).isTrue();
+        verify(accountService).validateSufficientBalance(account, BigDecimal.valueOf(50));
+        verify(accountService).updateBalance(account, BigDecimal.valueOf(50));
+    }
+
+    @Test
+    void withdraw_ShouldThrowForInvalidAmount() {
+        WithdrawRequest request = new WithdrawRequest(1L, Currency.USD, BigDecimal.valueOf(-10));
+
+        assertThatThrownBy(() -> transactionService.withdraw(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Amount must be greater than zero");
+    }
+
+    @Test
+    void exchange_ShouldPerformCurrencyExchange() {
+        ExchangeRequest request = new ExchangeRequest(1L, 2L, Currency.USD, Currency.TRY, BigDecimal.valueOf(100));
+        Account fromAccount = new Account(1L, Currency.USD, new User(), BigDecimal.valueOf(500));
+        Account toAccount = new Account(2L, Currency.TRY, new User(), BigDecimal.valueOf(1000));
+
+        when(accountService.getAccount(1L, Currency.USD)).thenReturn(fromAccount);
+        when(accountService.getAccount(2L, Currency.TRY)).thenReturn(toAccount);
+        when(exchangeRateService.getExchangeRate(Currency.USD, Currency.TRY)).thenReturn(BigDecimal.valueOf(30));
 
         GenericResponse response = transactionService.exchange(request);
 
-        assertTrue(response.success());
-        verify(accountService).updateBalance(from, new BigDecimal("50"));
-        verify(accountService).updateBalance(to, new BigDecimal("2000"));
+        assertThat(response.success()).isTrue();
+        verify(accountService).validateSufficientBalance(fromAccount, BigDecimal.valueOf(100));
+        verify(accountService).updateBalance(fromAccount, BigDecimal.valueOf(400));
+        verify(accountService).updateBalance(toAccount, BigDecimal.valueOf(4000));
+    }
+
+    @Test
+    void exchange_ShouldThrowForSameCurrency() {
+        ExchangeRequest request = new ExchangeRequest(1L, 2L, Currency.USD, Currency.USD, BigDecimal.valueOf(50));
+
+        assertThatThrownBy(() -> transactionService.exchange(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Source and target currencies must be different");
+    }
+
+    @Test
+    void getBalance_ShouldReturnUserBalance() {
+        Account account = new Account(1L, Currency.USD, new User(), BigDecimal.valueOf(500));
+        when(accountService.getAccount(1L, Currency.USD)).thenReturn(account);
+
+        BalanceResponse response = transactionService.getBalance(1L);
+
+        assertThat(response.userId()).isEqualTo(1L);
+        assertThat(response.balance()).isEqualTo(BigDecimal.valueOf(500));
     }
 }

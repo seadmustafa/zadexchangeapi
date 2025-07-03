@@ -21,7 +21,6 @@ public class TransactionRetryScheduler {
     public void retryPendingTransactions() {
         log.info("Running retry job for pending transactions");
 
-        // Example for demo - production: Use SCAN or Redis Streams for scalability
         Set<String> keys = redisTemplate.keys("result:*");
 
         keys.forEach(key -> {
@@ -32,7 +31,6 @@ public class TransactionRetryScheduler {
                 Long userId = Long.valueOf(parts[1]);
                 String transactionId = parts[2];
 
-                // Example re-publish (mocked)
                 producer.retryTransaction(userId, transactionId);
             }
         });

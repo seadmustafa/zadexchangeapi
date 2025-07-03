@@ -9,6 +9,7 @@ import com.zad.exchangeapi.dto.response.BalanceResponse;
 import com.zad.exchangeapi.dto.response.GenericResponse;
 import com.zad.exchangeapi.dto.response.OperationStatusResponse;
 import com.zad.exchangeapi.entity.Currency;
+import com.zad.exchangeapi.service.RedisRateLimiterService;
 import com.zad.exchangeapi.service.TransactionService;
 import com.zad.exchangeapi.service.messaging.producer.TransactionProducer;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,25 +23,24 @@ import org.springframework.http.ResponseEntity;
 
 import java.math.BigDecimal;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 class TransactionControllerTest {
 
     @Mock
     private RedisTemplate<String, String> redisTemplate;
-
+    @Mock
+    private ValueOperations<String, String> valueOperations;
     @Mock
     private TransactionService transactionService;
-
     @Mock
     private TransactionProducer transactionProducer;
+    @Mock
+    private RedisRateLimiterService rateLimiterService;
 
     @InjectMocks
     private TransactionController controller;
-
-    @Mock
-    private ValueOperations<String, String> valueOperations;
 
     @BeforeEach
     void setUp() {
@@ -49,67 +49,103 @@ class TransactionControllerTest {
     }
 
     @Test
-    void deposit_ShouldSendMessageAndReturnResponse() {
-        DepositRequest request = new DepositRequest(1L, Currency.USD, new BigDecimal("100"));
-        GenericResponse expected = new GenericResponse(true, "Deposit successful");
+    void deposit_ShouldAcceptRequestWhenAllowed() {
+        DepositRequest request = new DepositRequest(1L, Currency.USD, BigDecimal.TEN);
+        when(rateLimiterService.isAllowed("1")).thenReturn(true);
+        when(transactionService.deposit(request)).thenReturn(new GenericResponse(true, "Success"));
 
-        when(transactionService.deposit(request)).thenReturn(expected);
+        ResponseEntity<GenericResponse> response = controller.deposit(request);
 
-        GenericResponse response = controller.deposit(request);
-
-        assertEquals(expected, response);
+        assertThat(response.getStatusCodeValue()).isEqualTo(200);
         verify(transactionProducer).sendDeposit(any(DepositMessage.class));
+        verify(transactionService).deposit(request);
     }
 
     @Test
-    void withdraw_ShouldSendMessageAndReturnAccepted() {
-        WithdrawRequest request = new WithdrawRequest(2L, Currency.USD, new BigDecimal("50"));
+    void deposit_ShouldRejectWhenRateLimited() {
+        DepositRequest request = new DepositRequest(1L, Currency.USD, BigDecimal.TEN);
+        when(rateLimiterService.isAllowed("1")).thenReturn(false);
+
+        ResponseEntity<GenericResponse> response = controller.deposit(request);
+
+        assertThat(response.getStatusCodeValue()).isEqualTo(429);
+        verifyNoInteractions(transactionProducer);
+        verifyNoInteractions(transactionService);
+    }
+
+    @Test
+    void withdraw_ShouldAcceptRequestWhenAllowed() {
+        WithdrawRequest request = new WithdrawRequest(2L, Currency.USD, BigDecimal.valueOf(20));
+        when(rateLimiterService.isAllowed("2")).thenReturn(true);
 
         ResponseEntity<String> response = controller.withdraw(request);
 
-        assertEquals(202, response.getStatusCodeValue());
+        assertThat(response.getStatusCodeValue()).isEqualTo(202);
         verify(transactionProducer).sendWithdraw(any(WithdrawMessage.class));
         verify(transactionService).withdraw(request);
     }
 
     @Test
-    void exchange_ShouldCallService() {
-        ExchangeRequest request = new ExchangeRequest(1L, 2L, Currency.USD, Currency.TRY, new BigDecimal("200"));
-        GenericResponse expected = new GenericResponse(true, "Exchange completed");
+    void withdraw_ShouldRejectWhenRateLimited() {
+        WithdrawRequest request = new WithdrawRequest(2L, Currency.USD, BigDecimal.valueOf(20));
+        when(rateLimiterService.isAllowed("2")).thenReturn(false);
 
-        when(transactionService.exchange(request)).thenReturn(expected);
+        ResponseEntity<String> response = controller.withdraw(request);
 
-        GenericResponse response = controller.exchange(request);
-
-        assertEquals(expected, response);
+        assertThat(response.getStatusCodeValue()).isEqualTo(429);
+        verifyNoInteractions(transactionProducer);
     }
 
     @Test
-    void getBalance_ShouldReturnBalance() {
-        BalanceResponse expected = new BalanceResponse(1L, Currency.USD, new BigDecimal("300"));
+    void exchange_ShouldAcceptRequestWhenAllowed() {
+        ExchangeRequest request = new ExchangeRequest(3L, 4L, Currency.USD, Currency.TRY, BigDecimal.valueOf(100));
+        when(rateLimiterService.isAllowed("3")).thenReturn(true);
+        when(transactionService.exchange(request)).thenReturn(new GenericResponse(true, "Exchange success"));
 
-        when(transactionService.getBalance(1L)).thenReturn(expected);
+        ResponseEntity<GenericResponse> response = controller.exchange(request);
+
+        assertThat(response.getStatusCodeValue()).isEqualTo(200);
+        verify(transactionService).exchange(request);
+    }
+
+    @Test
+    void exchange_ShouldRejectWhenRateLimited() {
+        ExchangeRequest request = new ExchangeRequest(3L, 4L, Currency.USD, Currency.TRY, BigDecimal.valueOf(100));
+        when(rateLimiterService.isAllowed("3")).thenReturn(false);
+
+        ResponseEntity<GenericResponse> response = controller.exchange(request);
+
+        assertThat(response.getStatusCodeValue()).isEqualTo(429);
+        verifyNoInteractions(transactionService);
+    }
+
+    @Test
+    void getBalance_ShouldReturnBalanceResponse() {
+        BalanceResponse mockResponse = new BalanceResponse(1L, Currency.USD, BigDecimal.valueOf(500));
+        when(transactionService.getBalance(1L)).thenReturn(mockResponse);
 
         BalanceResponse response = controller.getBalance(1L);
 
-        assertEquals(expected, response);
+        assertThat(response).isEqualTo(mockResponse);
+        verify(transactionService).getBalance(1L);
     }
 
     @Test
-    void getOperationStatus_ReturnsCachedStatus() {
-        when(valueOperations.get("result:1")).thenReturn("SUCCESS");
+    void getOperationStatus_ShouldReturnExistingStatus() {
+        when(valueOperations.get("result:55")).thenReturn("SUCCESS");
 
-        OperationStatusResponse response = controller.getOperationStatus("1");
+        OperationStatusResponse response = controller.getOperationStatus("55");
 
-        assertEquals("SUCCESS", response.status());
+        assertThat(response.status()).isEqualTo("SUCCESS");
     }
 
     @Test
-    void getOperationStatus_ReturnsDefaultMessageIfNull() {
-        when(valueOperations.get("result:2")).thenReturn(null);
+    void getOperationStatus_ShouldReturnDefaultIfNotFound() {
+        when(valueOperations.get("result:99")).thenReturn(null);
 
-        OperationStatusResponse response = controller.getOperationStatus("2");
+        OperationStatusResponse response = controller.getOperationStatus("99");
 
-        assertEquals("Processing or no record", response.status());
+        assertThat(response.status()).isEqualTo("Processing or no record");
     }
 }
+

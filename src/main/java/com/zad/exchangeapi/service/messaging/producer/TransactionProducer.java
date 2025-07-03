@@ -12,29 +12,40 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TransactionProducer {
 
+    private static final String TRANSACTION_TOPIC = "transaction-queue";
+
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
+    /**
+     * Sends a deposit message to the unified transaction queue.
+     */
     public void sendDeposit(DepositMessage message) {
-        kafkaTemplate.send("deposit-topic", message);
+        log.info("Sending deposit message for userId: {} to Kafka", message.getUserId());
+        kafkaTemplate.send(TRANSACTION_TOPIC, String.valueOf(message.getUserId()), message);
     }
-
-    public void sendWithdraw(WithdrawMessage message) {
-        kafkaTemplate.send("withdraw-topic", message);
-    }
-
 
     /**
-     * Retry sending to the same topic based on message type.
+     * Sends a withdraw message to the unified transaction queue.
+     */
+    public void sendWithdraw(WithdrawMessage message) {
+        log.info("Sending withdraw message for userId: {} to Kafka", message.getUserId());
+        kafkaTemplate.send(TRANSACTION_TOPIC, String.valueOf(message.getUserId()), message);
+    }
+
+    /**
+     * Retries sending to the unified transaction queue, preserving message type and userId for partitioning.
      */
     public void retryTransaction(Object message, String transactionId) {
         if (message instanceof DepositMessage deposit) {
-            log.warn("Retrying deposit message: {} with transactionId: {}", deposit, transactionId);
-            kafkaTemplate.send("deposit-topic", deposit);
+            log.warn("Retrying deposit message for userId: {} with transactionId: {}", deposit.getUserId(), transactionId);
+            kafkaTemplate.send(TRANSACTION_TOPIC, String.valueOf(deposit.getUserId()), deposit);
+
         } else if (message instanceof WithdrawMessage withdraw) {
-            log.warn("Retrying withdraw message: {} with transactionId: {}", withdraw, transactionId);
-            kafkaTemplate.send("withdraw-topic", withdraw);
+            log.warn("Retrying withdraw message for userId: {} with transactionId: {}", withdraw.getUserId(), transactionId);
+            kafkaTemplate.send(TRANSACTION_TOPIC, String.valueOf(withdraw.getUserId()), withdraw);
+
         } else {
-            log.error("Unknown message type for retry: {} with transactionId: {}", message, transactionId);
+            log.error("Unknown message type for retry with transactionId: {}. Message: {}", transactionId, message);
         }
     }
 }

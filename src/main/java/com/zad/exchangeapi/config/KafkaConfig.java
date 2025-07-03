@@ -1,11 +1,14 @@
 package com.zad.exchangeapi.config;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.SerializationException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.ConsumerFactory;
@@ -19,20 +22,16 @@ import org.springframework.util.backoff.FixedBackOff;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Kafka topic configuration for deposit and withdraw messaging.
- */
 @Configuration
+@EnableKafka
+@Slf4j
 public class KafkaConfig {
 
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
 
-    @Value("${app.kafka.topics.deposit}")
-    private String depositTopic;
-
-    @Value("${app.kafka.topics.withdraw}")
-    private String withdrawTopic;
+    @Value("${app.kafka.topics.transaction}")
+    private String transactionTopic;
 
     @Value("${app.kafka.topics.dlq}")
     private String dlqTopic;
@@ -40,6 +39,11 @@ public class KafkaConfig {
     @Value("${app.kafka.retries.delay}")
     private long retryDelay;
 
+    @Value("${app.kafka.topics.partitions:3}")
+    private int partitions;
+
+    @Value("${app.kafka.topics.replicas:1}")
+    private short replicas;
 
     /**
      * Kafka admin client to manage topics.
@@ -51,30 +55,32 @@ public class KafkaConfig {
         return new KafkaAdmin(configs);
     }
 
+    /**
+     * Main unified transaction topic.
+     */
     @Bean
-    public NewTopic depositTopic() {
-        return buildTopic(depositTopic);
-    }
-
-    @Bean
-    public NewTopic withdrawTopic() {
-        return buildTopic(withdrawTopic);
-    }
-
-    @Bean
-    public NewTopic deadLetterTopic() {
-        return buildTopic(dlqTopic);
-    }
-
-    private NewTopic buildTopic(String name) {
-        return TopicBuilder.name(name)
-                .partitions(1)
-                .replicas(1)
+    public NewTopic transactionTopic() {
+        log.info("Creating transaction topic: {}", transactionTopic);
+        return TopicBuilder.name(transactionTopic)
+                .partitions(partitions)
+                .replicas(replicas)
                 .build();
     }
 
     /**
-     * Kafka listener factory with DLQ and retry mechanism.
+     * Dead-letter queue for failed messages.
+     */
+    @Bean
+    public NewTopic deadLetterTopic() {
+        log.info("Creating dead-letter topic: {}", dlqTopic);
+        return TopicBuilder.name(dlqTopic)
+                .partitions(partitions)
+                .replicas(replicas)
+                .build();
+    }
+
+    /**
+     * Kafka listener container factory with error handling.
      */
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, Object> kafkaListenerContainerFactory(
@@ -84,21 +90,39 @@ public class KafkaConfig {
         ConcurrentKafkaListenerContainerFactory<String, Object> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
         factory.setCommonErrorHandler(commonErrorHandler(kafkaTemplate));
-
         return factory;
     }
 
     /**
-     * Error handler that retries and sends failed messages to DLQ.
+     * Error handler with DLQ and retry policy.
      */
     @Bean
     public CommonErrorHandler commonErrorHandler(KafkaTemplate<String, Object> kafkaTemplate) {
-        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
-                kafkaTemplate,
-                (record, ex) -> new TopicPartition(dlqTopic, record.partition())
+
+        DefaultErrorHandler errorHandler = getDefaultErrorHandler(kafkaTemplate);
+
+        // Skip serialization errors immediately
+        errorHandler.addNotRetryableExceptions(SerializationException.class);
+
+        errorHandler.setRetryListeners((record, ex, deliveryAttempt) ->
+                log.warn("Retry attempt {} for record: {}, due to: {}", deliveryAttempt, record, ex.getMessage())
         );
 
-        return new DefaultErrorHandler(recoverer, new FixedBackOff(retryDelay, 3));
+        return errorHandler;
+    }
+
+    private DefaultErrorHandler getDefaultErrorHandler(KafkaTemplate<String, Object> kafkaTemplate) {
+        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
+                kafkaTemplate,
+                (record, ex) -> {
+                    log.error("Sending message to DLQ. Topic: {}, Partition: {}, Exception: {}", record.topic(), record.partition(), ex.getMessage());
+                    return new TopicPartition(dlqTopic, record.partition());
+                }
+        );
+
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, new FixedBackOff(retryDelay, 3));
+        return errorHandler;
     }
 }
+
 

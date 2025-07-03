@@ -29,11 +29,18 @@
 A robust, scalable API for managing user balances in USD and TRY currencies:
 
 ✅ Users can **deposit**, **withdraw**, **retrieve balance**, and **exchange currencies** between accounts in **TRY** and **USD**.
+
 ✅ Exchange rates retrieved from [https://www.exchangerate-api.com](https://www.exchangerate-api.com), valid for 1 minute  
+
 ✅ Withdraw and Deposit operations are **asynchronous** with status tracking.  
+
 ✅ Built with clean code principles, high test coverage, and Docker support.
 
+✅ Rate limiter has been implemented to prevent abuse and enhancing system protection and stability.
+
 ## 🔥 Additional Features for Demonstration & Observability
+
+
 
 - **Mock Users and Accounts:**  
   The application automatically generates demo users and initializes USD/TRY accounts with predefined balances on startup, simplifying local testing and demo scenarios.
@@ -100,8 +107,19 @@ Exchange operations only allowed between USD ↔️ TRY accounts
 
 ![img_2.png](src/main/resources/images/h2.png)
 
-
+-----
 ## Testing 
+
+-------
+ 
+The project achieves an overall test coverage of **89% per line**.
+
+- Core services, Kafka integration, Redis logic, and API endpoints are well covered.
+- Critical scenarios such as valid transactions, invalid inputs, and error handling are tested.
+- Some non-critical areas, like logging statements, auto-generated IDs, and occasional exception branches, remain partially uncovered.
+
+In general, the codebase maintains strong, reliable test coverage, suitable for production environments.
 
 ![img.png](src/main/resources/images/coverage.png)
 
+-------

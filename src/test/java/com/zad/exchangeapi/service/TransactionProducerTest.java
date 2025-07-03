@@ -1,9 +1,9 @@
 package com.zad.exchangeapi.service;
 
-
 import com.zad.exchangeapi.dto.kafka.DepositMessage;
 import com.zad.exchangeapi.dto.kafka.WithdrawMessage;
 import com.zad.exchangeapi.entity.Currency;
+import com.zad.exchangeapi.entity.OperationType;
 import com.zad.exchangeapi.service.messaging.producer.TransactionProducer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,10 +14,11 @@ import org.springframework.kafka.core.KafkaTemplate;
 
 import java.math.BigDecimal;
 
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.*;
 
 class TransactionProducerTest {
+
+    private static final String TRANSACTION_TOPIC = "transaction-queue";
 
     @Mock
     private KafkaTemplate<String, Object> kafkaTemplate;
@@ -31,49 +32,72 @@ class TransactionProducerTest {
     }
 
     @Test
-    void sendDeposit_ShouldSendToDepositTopic() {
-        DepositMessage message = new DepositMessage(1L, Currency.USD, new BigDecimal("100"), "op-1");
+    void sendDeposit_ShouldSendMessageToTransactionQueue() {
+        DepositMessage message = DepositMessage.builder()
+                .userId(1L)
+                .currency(Currency.USD)
+                .amount(BigDecimal.valueOf(100))
+                .operationId("op-1")
+                .operationType(OperationType.DEPOSIT)
+                .build();
 
         producer.sendDeposit(message);
 
-        verify(kafkaTemplate).send("deposit-topic", message);
+        verify(kafkaTemplate, times(1)).send(TRANSACTION_TOPIC, String.valueOf(message.getUserId()), message);
     }
 
     @Test
-    void sendWithdraw_ShouldSendToWithdrawTopic() {
-        WithdrawMessage message = new WithdrawMessage(2L, Currency.USD, new BigDecimal("50"), "op-2");
+    void sendWithdraw_ShouldSendMessageToTransactionQueue() {
+        WithdrawMessage message = WithdrawMessage.builder()
+                .userId(2L)
+                .currency(Currency.USD)
+                .amount(BigDecimal.valueOf(50))
+                .operationId("op-2")
+                .operationType(OperationType.WITHDRAW)
+                .build();
 
         producer.sendWithdraw(message);
 
-        verify(kafkaTemplate).send("withdraw-topic", message);
+        verify(kafkaTemplate, times(1)).send(TRANSACTION_TOPIC, String.valueOf(message.getUserId()), message);
     }
 
     @Test
     void retryTransaction_ShouldRetryDepositMessage() {
-        DepositMessage message = new DepositMessage(3L, Currency.USD, new BigDecimal("200"), "op-3");
+        DepositMessage message = DepositMessage.builder()
+                .userId(3L)
+                .currency(Currency.USD)
+                .amount(BigDecimal.valueOf(200))
+                .operationId("op-3")
+                .operationType(OperationType.DEPOSIT)
+                .build();
 
-        producer.retryTransaction(message, "op-3");
+        producer.retryTransaction(message, message.getOperationId());
 
-        verify(kafkaTemplate).send("deposit-topic", message);
+        verify(kafkaTemplate, times(1)).send(TRANSACTION_TOPIC, String.valueOf(message.getUserId()), message);
     }
 
     @Test
     void retryTransaction_ShouldRetryWithdrawMessage() {
-        WithdrawMessage message = new WithdrawMessage(4L, Currency.USD, new BigDecimal("75"), "op-4");
+        WithdrawMessage message = WithdrawMessage.builder()
+                .userId(4L)
+                .currency(Currency.USD)
+                .amount(BigDecimal.valueOf(75))
+                .operationId("op-4")
+                .operationType(OperationType.WITHDRAW)
+                .build();
 
-        producer.retryTransaction(message, "op-4");
+        producer.retryTransaction(message, message.getOperationId());
 
-        verify(kafkaTemplate).send("withdraw-topic", message);
+        verify(kafkaTemplate, times(1)).send(TRANSACTION_TOPIC, String.valueOf(message.getUserId()), message);
     }
 
     @Test
-    void retryTransaction_ShouldLogErrorForUnknownType() {
+    void retryTransaction_ShouldLogErrorForUnknownMessageType() {
         Object unknownMessage = new Object();
 
         producer.retryTransaction(unknownMessage, "op-unknown");
 
-        verifyNoInteractions(kafkaTemplate); // Should not send anything
+        verifyNoInteractions(kafkaTemplate);
     }
+
 }
-
-

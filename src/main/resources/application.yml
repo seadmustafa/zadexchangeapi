@@ -28,13 +28,14 @@ spring:
 
   kafka:
     consumer:
-      group-id: balance-group
+      group-id: transaction-group
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       bootstrap-servers: kafka:29092
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: "*"
+#        spring.json.trusted.packages: "*"
+        spring.json.type.mapping: DepositMessage:com.zad.exchangeapi.dto.kafka.DepositMessage,WithdrawMessage:com.zad.exchangeapi.dto.kafka.WithdrawMessage
     producer:
       bootstrap-servers: kafka:29092
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -63,11 +64,14 @@ external:
     url: https://v6.exchangerate-api.com/v6
     apiKey: 8ebf845d4d505e16d95c3487
 
+
+
 app:
   kafka:
     topics:
-      deposit: deposit-topic
-      withdraw: withdraw-topic
+      transaction: transaction-queue
       dlq: dlq-topic
+      partitions: 3
+      replicas: 1
     retries:
       delay: 2000

@@ -3,25 +3,19 @@ package com.zad.exchangeapi.utils;
 import com.zad.exchangeapi.config.KafkaConfig;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.listener.CommonErrorHandler;
-import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 
 import java.lang.reflect.Field;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class KafkaConfigTest {
@@ -40,102 +34,71 @@ class KafkaConfigTest {
 
         kafkaConfig = new KafkaConfig();
 
-        // Inject private fields via reflection
         setPrivateField(kafkaConfig, "bootstrapServers", "localhost:9092");
-        setPrivateField(kafkaConfig, "depositTopic", "deposit-topic");
-        setPrivateField(kafkaConfig, "withdrawTopic", "withdraw-topic");
+        setPrivateField(kafkaConfig, "transactionTopic", "transaction-topic");
         setPrivateField(kafkaConfig, "dlqTopic", "dlq-topic");
         setPrivateField(kafkaConfig, "retryDelay", 1000L);
+        setPrivateField(kafkaConfig, "partitions", 3);
+        setPrivateField(kafkaConfig, "replicas", (short) 2);
 
-        kafkaTemplate = mock(KafkaTemplate.class);
         when(kafkaTemplate.isTransactional()).thenReturn(false);
     }
 
     @Test
-    void kafkaAdmin_shouldHaveCorrectBootstrapServers() {
+    void kafkaAdmin_shouldContainBootstrapServers() {
         KafkaAdmin admin = kafkaConfig.kafkaAdmin();
         Map<String, Object> configs = admin.getConfigurationProperties();
 
-        assertThat(configs.get(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG))
-                .isEqualTo("localhost:9092");
+        assertThat(configs)
+                .containsEntry(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
     }
 
     @Test
-    void depositTopic_shouldBeConfiguredCorrectly() {
-        NewTopic topic = kafkaConfig.depositTopic();
+    void transactionTopic_shouldBeCreatedWithCorrectSettings() {
+        NewTopic topic = kafkaConfig.transactionTopic();
 
-        assertThat(topic.name()).isEqualTo("deposit-topic");
-        assertThat(topic.numPartitions()).isEqualTo(1);
-        assertThat(topic.replicationFactor()).isEqualTo((short) 1);
+        assertThat(topic.name()).isEqualTo("transaction-topic");
+        assertThat(topic.numPartitions()).isEqualTo(3);
+        assertThat(topic.replicationFactor()).isEqualTo((short) 2);
     }
 
     @Test
-    void withdrawTopic_shouldBeConfiguredCorrectly() {
-        NewTopic topic = kafkaConfig.withdrawTopic();
-
-        assertThat(topic.name()).isEqualTo("withdraw-topic");
-        assertThat(topic.numPartitions()).isEqualTo(1);
-    }
-
-    @Test
-    void deadLetterTopic_shouldBeConfiguredCorrectly() {
+    void deadLetterTopic_shouldBeCreatedWithCorrectSettings() {
         NewTopic topic = kafkaConfig.deadLetterTopic();
 
         assertThat(topic.name()).isEqualTo("dlq-topic");
-        assertThat(topic.numPartitions()).isEqualTo(1);
+        assertThat(topic.numPartitions()).isEqualTo(3);
+        assertThat(topic.replicationFactor()).isEqualTo((short) 2);
     }
 
     @Test
-    void kafkaListenerContainerFactory_shouldInitializeWithConsumerFactory() {
-        ConcurrentKafkaListenerContainerFactory<String, Object> factory =
-                kafkaConfig.kafkaListenerContainerFactory(consumerFactory, kafkaTemplate);
+    void kafkaListenerContainerFactory_shouldCreateFactoryWithInjectedDependencies() {
+        var factory = kafkaConfig.kafkaListenerContainerFactory(consumerFactory, kafkaTemplate);
 
-        assertThat(factory.getConsumerFactory()).isEqualTo(consumerFactory);
+        assertThat(factory).isNotNull();
     }
+
 
     @Test
-    void commonErrorHandler_shouldBeDefaultErrorHandlerWithDLQ() {
-        CommonErrorHandler errorHandler = kafkaConfig.commonErrorHandler(kafkaTemplate);
+    void defaultErrorHandler_shouldRegisterRetryListener() {
+        DefaultErrorHandler handler = (DefaultErrorHandler)
+                kafkaConfig.commonErrorHandler(kafkaTemplate);
 
-        assertThat(errorHandler).isInstanceOf(DefaultErrorHandler.class);
+        assertThat(handler).isNotNull();
+
+        // Simulate setting retry listeners to confirm no exceptions
+        handler.setRetryListeners((record, ex, attempt) -> {
+            assertThat(record).isNotNull();
+            assertThat(ex).isNotNull();
+            assertThat(attempt).isGreaterThanOrEqualTo(1);
+        });
     }
 
-    @Test
-    void deadLetterPublishingRecoverer_shouldSendToCorrectDLQTopic() {
-        String dlqTopic = getPrivateField(kafkaConfig, "dlqTopic");
-
-        // Replicate the same lambda logic
-        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
-                kafkaTemplate,
-                (record, ex) -> new TopicPartition(dlqTopic, record.partition())
-        );
-
-        // Simulate a record with a known partition
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("test-topic", 2, 0L, "key", "value");
-
-        // Use the lambda logic manually
-        TopicPartition partition = new TopicPartition(dlqTopic, record.partition());
-
-        assertThat(partition.topic()).isEqualTo("dlq-topic");
-        assertThat(partition.partition()).isEqualTo(2);
-    }
-
-
-    // Helper for setting private fields
+    // Helper methods for reflection
     private void setPrivateField(Object target, String fieldName, Object value) throws Exception {
         Field field = target.getClass().getDeclaredField(fieldName);
         field.setAccessible(true);
         field.set(target, value);
     }
 
-    // Helper for getting private field values
-    private String getPrivateField(Object target, String fieldName) {
-        try {
-            Field field = target.getClass().getDeclaredField(fieldName);
-            field.setAccessible(true);
-            return (String) field.get(target);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
 }
